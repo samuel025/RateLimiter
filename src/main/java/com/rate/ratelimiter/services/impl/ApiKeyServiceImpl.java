@@ -6,6 +6,9 @@ import com.rate.ratelimiter.repository.ApiClientRepository;
 import com.rate.ratelimiter.repository.ApiKeyRepository;
 import com.rate.ratelimiter.services.ApiKeyService;
 
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.transaction.Transactional;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -21,7 +24,10 @@ public class ApiKeyServiceImpl implements ApiKeyService {
     private final ApiKeyRepository apiKeyRepository;
     private final ApiClientRepository apiClientRepository;
 
-    public ApiKeyServiceImpl(ApiKeyRepository apiKeyRepository, ApiClientRepository apiClientRepository) {
+    public ApiKeyServiceImpl(
+        ApiKeyRepository apiKeyRepository,
+        ApiClientRepository apiClientRepository
+    ) {
         this.apiKeyRepository = apiKeyRepository;
         this.apiClientRepository = apiClientRepository;
     }
@@ -47,36 +53,168 @@ public class ApiKeyServiceImpl implements ApiKeyService {
 
     @Override
     public ValidationResult validateForRequest(String rawApiKey) {
-        return null;
+        if (rawApiKey == null || rawApiKey.isBlank()) {
+            return new ValidationResult(
+                ValidationStatus.MISSING,
+                null,
+                null,
+                "API key is missing"
+            );
+        }
+
+        String normalized = rawApiKey.trim();
+        if (normalized.length() < 16) {
+            return new ValidationResult(
+                ValidationStatus.MALFORMED,
+                null,
+                null,
+                "API key format is invalid"
+            );
+        }
+
+        Optional<ApiKey> keyOpt = findByRawKey(normalized);
+        if (keyOpt.isEmpty()) {
+            return new ValidationResult(
+                ValidationStatus.NOT_FOUND,
+                null,
+                null,
+                "API key not found"
+            );
+        }
+
+        ApiKey apiKey = keyOpt.get();
+        ApiClient client = apiKey.getClient();
+
+        if (apiKey.isRevoked()) {
+            return new ValidationResult(
+                ValidationStatus.REVOKED,
+                apiKey,
+                client,
+                "API key is revoked"
+            );
+        }
+
+        Instant now = Instant.now();
+        if (
+            apiKey.getExpiresAt() != null && apiKey.getExpiresAt().isBefore(now)
+        ) {
+            return new ValidationResult(
+                ValidationStatus.EXPIRED,
+                apiKey,
+                client,
+                "API key is expired"
+            );
+        }
+
+        if (client == null || !client.isActive()) {
+            return new ValidationResult(
+                ValidationStatus.CLIENT_INACTIVE,
+                apiKey,
+                client,
+                "Client is inactive"
+            );
+        }
+
+        return new ValidationResult(
+            ValidationStatus.VALID,
+            apiKey,
+            client,
+            "API key is valid"
+        );
     }
 
     @Override
-    public CreatedApiKey createKey(UUID clientId, int rateLimitPerMinute, Instant expiresAt) {
-        return null;
+    @Transactional
+    public CreatedApiKey createKey(
+        UUID clientId,
+        int rateLimitPerMinute,
+        Instant expiresAt
+    ) {
+        if (clientId == null) {
+            throw new IllegalArgumentException("clientId is required");
+        }
+        if (rateLimitPerMinute <= 0) {
+            throw new IllegalArgumentException(
+                "rateLimitPerMinute must be > 0"
+            );
+        }
+
+        ApiClient client = apiClientRepository.findById(clientId).orElseThrow(() ->
+            new EntityNotFoundException("ApiClient not found: " + clientId)
+        );
+
+        if (!client.isActive()) {
+            throw new IllegalStateException(
+                "Cannot create key for inactive client: " + clientId
+            );
+        }
+
+        String plaintextKey = generatePlaintextKey();
+        String keyPrefix = plaintextKey.substring(0, 12);
+        String keyHash = sha256(plaintextKey);
+
+        ApiKey apiKey = new ApiKey();
+        apiKey.setClient(client);
+        apiKey.setKeyPrefix(keyPrefix);
+        apiKey.setKeyHash(keyHash);
+        apiKey.setRateLimitPerMinute(rateLimitPerMinute);
+        apiKey.setRevoked(false);
+        apiKey.setExpiresAt(expiresAt);
+
+        ApiKey saved = apiKeyRepository.save(apiKey);
+
+        return new CreatedApiKey(
+            saved.getId(),
+            client.getId(),
+            saved.getKeyPrefix(),
+            plaintextKey,
+            saved.getRateLimitPerMinute(),
+            saved.getExpiresAt(),
+            saved.getCreatedAt()
+        );
+    }
+
+    private String generatePlaintextKey() {
+        String random =
+            UUID.randomUUID().toString().replace("-", "") +
+            UUID.randomUUID().toString().replace("-", "");
+        return "rk_live_" + random;
     }
 
     @Override
     public void revokeKey(UUID apiKeyId) {
-        
+        ApiKey key = apiKeyRepository.findById(apiKeyId).orElseThrow(() ->
+            new EntityNotFoundException("ApiKey not found: " + apiKeyId)
+        );
+        key.setRevoked(true);
+        apiKeyRepository.save(key);
     }
 
     @Override
     public ApiKey updateRateLimit(UUID apiKeyId, int newRateLimitPerMinute) {
-        return null;
+        ApiKey key = apiKeyRepository.findById(apiKeyId).orElseThrow(() ->
+            new EntityNotFoundException("ApiKey not found: " + apiKeyId)
+        );
+        key.setRateLimitPerMinute(newRateLimitPerMinute);
+        return apiKeyRepository.save(key);
     }
 
     @Override
     public void touchLastUsed(UUID apiKeyId, Instant usedAt) {
-        
+        ApiKey key = apiKeyRepository.findById(apiKeyId).orElseThrow(() ->
+            new EntityNotFoundException("ApiKey not found: " + apiKeyId)
+        );
+        key.setLastUsedAt(usedAt);
+        apiKeyRepository.save(key);
     }
 
     @Override
     public Optional<ApiKey> findById(UUID apiKeyId) {
-        return null;
+        return apiKeyRepository.findById(apiKeyId);
     }
 
     @Override
     public Optional<ApiClient> findClientById(UUID clientId) {
-        return null;
+        return apiClientRepository.findById(clientId);
     }
 }
