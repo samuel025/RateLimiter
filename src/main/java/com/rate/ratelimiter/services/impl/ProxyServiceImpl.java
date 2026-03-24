@@ -3,6 +3,9 @@ package com.rate.ratelimiter.services.impl;
 import com.rate.ratelimiter.entity.ApiKey;
 import com.rate.ratelimiter.services.ProxyService;
 import com.rate.ratelimiter.services.UsageLogService;
+
+import lombok.extern.slf4j.Slf4j;
+
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -22,6 +25,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 @Service
+@Slf4j
 public class ProxyServiceImpl implements ProxyService {
 
     private final RestTemplate restTemplate;
@@ -95,14 +99,15 @@ public class ProxyServiceImpl implements ProxyService {
         } catch (ResourceAccessException ex) {
             // Timeout / DNS / connection error.
             finalStatus = 502;
-            responseBody = ("Upstream unavailable: " + ex.getMessage()).getBytes(StandardCharsets.UTF_8);
+            responseBody = ("Upstream unavailable").getBytes(StandardCharsets.UTF_8);
+            log.error("Upstream unavailable: {}", ex.getMessage(), ex);
             responseHeaders = Map.of("Content-Type", "text/plain; charset=UTF-8");
 
             return new ProxyResponse(finalStatus, responseHeaders, responseBody);
 
         } finally {
             long latencyMs = Math.max(0, (System.nanoTime() - startNanos) / 1_000_000L);
-            String clientIp = firstHeader(headers, "X-Forwarded-For");
+            String clientIp = extractClientIp(headers);
             String userAgent = firstHeader(headers, "User-Agent");
 
             usageLogService.logRequest(
@@ -117,6 +122,15 @@ public class ProxyServiceImpl implements ProxyService {
                 startedAt
             );
         }
+    }
+    
+    private String extractClientIp(Map<String, String> headers) {
+        String xff = firstHeader(headers, "X-Forwarded-For");
+        if (xff == null || xff.isBlank()) {
+            return null;
+        }
+        int comma = xff.indexOf(',');
+        return (comma > 0 ? xff.substring(0, comma) : xff).trim();
     }
 
     private String firstHeader(Map<String, String> headers, String name) {
