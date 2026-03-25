@@ -4,9 +4,9 @@ import com.rate.ratelimiter.entity.ApiKey;
 import com.rate.ratelimiter.entity.UsageLog;
 import com.rate.ratelimiter.repository.UsageLogRepository;
 import com.rate.ratelimiter.services.UsageLogService;
+import jakarta.transaction.Transactional;
 import java.time.Instant;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class UsageLogServiceImpl implements UsageLogService {
