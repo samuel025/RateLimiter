@@ -24,6 +24,11 @@ public interface ApiKeyService {
     ValidationResult validateForRequest(String rawApiKey);
 
     /**
+     * Creates a new API client.
+     */
+    CreatedApiClient createClient(String name, String contactEmail);
+
+    /**
      * Creates a new API key for a client and returns the plaintext key one time.
      * Persist only hash/prefix in storage.
      */
@@ -86,6 +91,14 @@ public interface ApiKeyService {
         String plaintextKey,
         int rateLimitPerMinute,
         Instant expiresAt,
+        Instant createdAt
+    ) {}
+
+    record CreatedApiClient(
+        UUID clientId,
+        String name,
+        String contactEmail,
+        boolean active,
         Instant createdAt
     ) {}
 }

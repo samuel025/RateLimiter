@@ -93,3 +93,17 @@ Set these in `src/main/resources/application.properties`:
 - JPA settings
 - upstream base URL
 
+---
+
+## API Documentation
+
+Swagger UI and OpenAPI docs are available when the app is running:
+
+- Swagger UI: `http://localhost:8091/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8091/v3/api-docs`
+
+The OpenAPI spec includes:
+
+- API metadata for the gateway service
+- `X-API-Key` security scheme definition
+- Admin and Gateway endpoint tags/operation summaries

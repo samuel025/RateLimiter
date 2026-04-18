@@ -15,7 +15,9 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -23,13 +25,44 @@ public class ApiKeyServiceImpl implements ApiKeyService {
 
     private final ApiKeyRepository apiKeyRepository;
     private final ApiClientRepository apiClientRepository;
+    private final StringRedisTemplate redisTemplate;
 
     public ApiKeyServiceImpl(
         ApiKeyRepository apiKeyRepository,
-        ApiClientRepository apiClientRepository
+        ApiClientRepository apiClientRepository,
+        StringRedisTemplate redisTemplate
     ) {
         this.apiKeyRepository = apiKeyRepository;
         this.apiClientRepository = apiClientRepository;
+        this.redisTemplate = redisTemplate;
+    }
+
+    @Override
+    @Transactional
+    public CreatedApiClient createClient(String name, String contactEmail) {
+        String normalizedName = normalizeRequired(name, "name");
+        String normalizedEmail = normalizeRequired(contactEmail, "contactEmail");
+
+        if (apiClientRepository.findByName(normalizedName).isPresent()) {
+            throw new IllegalStateException("Client name already exists: " + normalizedName);
+        }
+        if (apiClientRepository.findByContactEmailIgnoreCase(normalizedEmail).isPresent()) {
+            throw new IllegalStateException("Client email already exists: " + normalizedEmail);
+        }
+
+        ApiClient client = new ApiClient();
+        client.setName(normalizedName);
+        client.setContactEmail(normalizedEmail);
+        client.setActive(true);
+
+        ApiClient saved = apiClientRepository.save(client);
+        return new CreatedApiClient(
+            saved.getId(),
+            saved.getName(),
+            saved.getContactEmail(),
+            saved.isActive(),
+            saved.getCreatedAt()
+        );
     }
 
     @Override
@@ -38,7 +71,7 @@ public class ApiKeyServiceImpl implements ApiKeyService {
             return Optional.empty();
         }
         String keyHash = sha256(rawApiKey.trim());
-        return apiKeyRepository.findByKeyHash(keyHash);
+        return apiKeyRepository.findWithClientByKeyHash(keyHash);
     }
 
     private String sha256(String value) {
@@ -192,11 +225,17 @@ public class ApiKeyServiceImpl implements ApiKeyService {
 
     @Override
     public ApiKey updateRateLimit(UUID apiKeyId, int newRateLimitPerMinute) {
+        if (newRateLimitPerMinute <= 0) {
+            throw new IllegalArgumentException("newRateLimitPerMinute must be > 0");
+        }
+
         ApiKey key = apiKeyRepository.findById(apiKeyId).orElseThrow(() ->
             new EntityNotFoundException("ApiKey not found: " + apiKeyId)
         );
         key.setRateLimitPerMinute(newRateLimitPerMinute);
-        return apiKeyRepository.save(key);
+        ApiKey updated = apiKeyRepository.save(key);
+        clearRateLimiterState(apiKeyId);
+        return updated;
     }
 
     @Override
@@ -216,5 +255,20 @@ public class ApiKeyServiceImpl implements ApiKeyService {
     @Override
     public Optional<ApiClient> findClientById(UUID clientId) {
         return apiClientRepository.findById(clientId);
+    }
+
+    private String normalizeRequired(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " is required");
+        }
+        return value.trim();
+    }
+
+    private void clearRateLimiterState(UUID apiKeyId) {
+        String pattern = "ratelimit:" + apiKeyId + ":*";
+        Set<String> keys = redisTemplate.keys(pattern);
+        if (keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
     }
 }

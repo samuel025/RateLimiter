@@ -9,4 +9,6 @@ import java.util.UUID;
 
 public interface ApiClientRepository extends JpaRepository<ApiClient, UUID> {
     Optional<ApiClient> findById(UUID id);
+    Optional<ApiClient> findByName(String name);
+    Optional<ApiClient> findByContactEmailIgnoreCase(String contactEmail);
 }
