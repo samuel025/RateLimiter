@@ -1,9 +1,13 @@
 package com.rate.ratelimiter.controllers;
 
 import com.rate.ratelimiter.services.ApiKeyService;
+import com.rate.ratelimiter.services.ApiKeyService.CreatedApiClient;
 import com.rate.ratelimiter.services.ApiKeyService.CreatedApiKey;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Nonnull;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -18,6 +22,7 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/admin")
+@Tag(name = "Admin", description = "Admin operations for clients and API keys")
 public class AdminController {
 
     private final ApiKeyService apiKeyService;
@@ -27,9 +32,34 @@ public class AdminController {
     }
 
     /**
+     * Create a new API client.
+     */
+    @PostMapping("/clients")
+    @Operation(summary = "Create API client")
+    public ResponseEntity<CreateClientResponse> createClient(
+        @RequestBody CreateClientRequest request
+    ) {
+        CreatedApiClient created = apiKeyService.createClient(
+            request.name(),
+            request.contactEmail()
+        );
+
+        CreateClientResponse response = new CreateClientResponse(
+            created.clientId(),
+            created.name(),
+            created.contactEmail(),
+            created.active(),
+            created.createdAt()
+        );
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
      * Create a new API key for an existing client.
      */
     @PostMapping("/keys")
+     @Operation(summary = "Create API key for existing client")
     public ResponseEntity<CreateKeyResponse> createKey(
        @RequestBody CreateKeyRequest request
     ) {
@@ -56,6 +86,7 @@ public class AdminController {
      * Revoke an API key by id.
      */
     @PostMapping("/keys/{apiKeyId}/revoke")
+    @Operation(summary = "Revoke API key")
     public ResponseEntity<Map<String, Object>> revokeKey(
         @PathVariable UUID apiKeyId
     ) {
@@ -76,6 +107,7 @@ public class AdminController {
      * Update the per-minute rate limit for a key.
      */
     @PatchMapping("/keys/{apiKeyId}/rate-limit")
+    @Operation(summary = "Update API key per-minute limit")
     public ResponseEntity<Map<String, Object>> updateRateLimit(
         @PathVariable UUID apiKeyId,
         @RequestParam("value") int value
@@ -97,31 +129,22 @@ public class AdminController {
      * Optional quick read endpoint to verify a key exists.
      */
     @GetMapping("/keys/{apiKeyId}")
+    @Operation(summary = "Get API key metadata")
     public ResponseEntity<?> getKey(@PathVariable UUID apiKeyId) {
         return apiKeyService
             .findById(apiKeyId)
-            .<ResponseEntity<?>>map(k ->
-                ResponseEntity.ok(
-                    Map.of(
-                        "id",
-                        k.getId(),
-                        "clientId",
-                        k.getClient().getId(),
-                        "keyPrefix",
-                        k.getKeyPrefix(),
-                        "rateLimitPerMinute",
-                        k.getRateLimitPerMinute(),
-                        "revoked",
-                        k.isRevoked(),
-                        "expiresAt",
-                        k.getExpiresAt(),
-                        "lastUsedAt",
-                        k.getLastUsedAt(),
-                        "createdAt",
-                        k.getCreatedAt()
-                    )
-                )
-            )
+            .<ResponseEntity<?>>map(k -> {
+                Map<String, Object> body = new LinkedHashMap<>();
+                body.put("id", k.getId());
+                body.put("clientId", k.getClient().getId());
+                body.put("keyPrefix", k.getKeyPrefix());
+                body.put("rateLimitPerMinute", k.getRateLimitPerMinute());
+                body.put("revoked", k.isRevoked());
+                body.put("expiresAt", k.getExpiresAt());
+                body.put("lastUsedAt", k.getLastUsedAt());
+                body.put("createdAt", k.getCreatedAt());
+                return ResponseEntity.ok(body);
+            })
             .orElseGet(() ->
                 ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                     Map.of(
@@ -147,6 +170,19 @@ public class AdminController {
         @Nonnull UUID clientId,
         int rateLimitPerMinute,
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant expiresAt
+    ) {}
+
+    public record CreateClientRequest(
+        @Nonnull String name,
+        @Nonnull String contactEmail
+    ) {}
+
+    public record CreateClientResponse(
+        UUID clientId,
+        String name,
+        String contactEmail,
+        boolean active,
+        Instant createdAt
     ) {}
 
     /**

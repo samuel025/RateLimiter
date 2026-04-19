@@ -4,6 +4,8 @@ import com.rate.ratelimiter.entity.ApiKey;
 import com.rate.ratelimiter.interceptors.AuthInterceptor;
 import com.rate.ratelimiter.services.ProxyService;
 import com.rate.ratelimiter.services.ProxyService.ProxyResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import java.util.Enumeration;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/gateway")
+@Tag(name = "Gateway", description = "Catch-all proxy endpoint protected by API key and rate limits")
 public class GatewayController {
 
     private final ProxyService proxyService;
@@ -30,6 +33,7 @@ public class GatewayController {
     }
 
     @RequestMapping("/**")
+    @Operation(summary = "Proxy request to configured upstream service")
     public ResponseEntity<byte[]> proxy(
         HttpServletRequest request,
         @RequestBody(required = false) byte[] body
