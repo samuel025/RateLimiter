@@ -63,9 +63,12 @@ public class RateLimiterServiceImpl implements RateLimiterService {
 
             String[] parts = result.split(":", 2);
             boolean allowed = "1".equals(parts[0]);
-            int remaining = (int) Math.max(0, Double.parseDouble(parts[1]));
+            double newTokens = Double.parseDouble(parts[1]);
+            int remaining = (int) Math.max(0, newTokens);
 
-            long retryAfterSeconds = allowed ? 0L : (long) Math.ceil(1.0 / refillRatePerSecond);
+            long retryAfterSeconds = allowed
+                ? 0L
+                : (long) Math.max(0.0, Math.ceil((1.0 - newTokens) / refillRatePerSecond));
             Instant resetAt = now.plusSeconds(retryAfterSeconds);
 
             if (allowed) {
