@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -28,18 +29,41 @@ import org.springframework.web.client.RestTemplate;
 @Slf4j
 public class ProxyServiceImpl implements ProxyService {
 
+    private enum CircuitState {
+        CLOSED,
+        OPEN,
+        HALF_OPEN
+    }
+
     private final RestTemplate restTemplate;
     private final UsageLogService usageLogService;
     private final String upstreamBaseUrl;
+    private final int idempotentMaxAttempts;
+    private final long retryBackoffMillis;
+    private final int failureThreshold;
+    private final long circuitOpenSeconds;
+
+    private final AtomicInteger consecutiveFailures = new AtomicInteger(0);
+    private volatile CircuitState circuitState = CircuitState.CLOSED;
+    private volatile Instant openedAt = Instant.EPOCH;
+    private volatile String lastFailureReason = "";
 
     public ProxyServiceImpl(
         RestTemplate restTemplate,
         UsageLogService usageLogService,
-        @Value("${gateway.upstream.base-url}") String upstreamBaseUrl
+        @Value("${gateway.upstream.base-url}") String upstreamBaseUrl,
+        @Value("${gateway.proxy.retry.max-attempts-idempotent:3}") int idempotentMaxAttempts,
+        @Value("${gateway.proxy.retry.backoff-millis:150}") long retryBackoffMillis,
+        @Value("${gateway.proxy.circuit-breaker.failure-threshold:5}") int failureThreshold,
+        @Value("${gateway.proxy.circuit-breaker.open-seconds:30}") long circuitOpenSeconds
     ) {
         this.restTemplate = restTemplate;
         this.usageLogService = usageLogService;
         this.upstreamBaseUrl = upstreamBaseUrl;
+        this.idempotentMaxAttempts = Math.max(1, idempotentMaxAttempts);
+        this.retryBackoffMillis = Math.max(0, retryBackoffMillis);
+        this.failureThreshold = Math.max(1, failureThreshold);
+        this.circuitOpenSeconds = Math.max(1, circuitOpenSeconds);
     }
 
     @Override
@@ -72,39 +96,88 @@ public class ProxyServiceImpl implements ProxyService {
         byte[] responseBody = null;
         Map<String, String> responseHeaders = Map.of();
 
+        if (!allowRequestThroughCircuit()) {
+            finalStatus = 503;
+            responseBody = fallbackBody("Circuit breaker is open; upstream temporarily blocked.");
+            responseHeaders = fallbackHeaders();
+            return new ProxyResponse(finalStatus, responseHeaders, responseBody);
+        }
+
+        int maxAttempts = isIdempotent(httpMethod) ? idempotentMaxAttempts : 1;
+
         try {
-            ResponseEntity<byte[]> upstream = restTemplate.exchange(
-                URI.create(url),
-                httpMethod,
-                requestEntity,
-                byte[].class
-            );
+            for (int attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                try {
+                    ResponseEntity<byte[]> upstream = restTemplate.exchange(
+                        URI.create(url),
+                        httpMethod,
+                        requestEntity,
+                        byte[].class
+                    );
 
-            upstreamStatus = upstream.getStatusCode().value();
-            finalStatus = upstreamStatus;
-            responseBody = upstream.getBody();
-            responseHeaders = flattenHeaders(upstream.getHeaders());
+                    upstreamStatus = upstream.getStatusCode().value();
+                    finalStatus = upstreamStatus;
+                    responseBody = upstream.getBody();
+                    responseHeaders = flattenHeaders(upstream.getHeaders());
 
-            return new ProxyResponse(finalStatus, responseHeaders, responseBody);
+                    recordSuccess();
+                    return new ProxyResponse(finalStatus, responseHeaders, responseBody);
 
-        } catch (HttpStatusCodeException ex) {
-            // Upstream returned non-2xx/3xx; still proxied response.
-            upstreamStatus = ex.getStatusCode().value();
-            finalStatus = upstreamStatus;
-            responseBody = ex.getResponseBodyAsByteArray();
-            responseHeaders = flattenHeaders(ex.getResponseHeaders());
+                } catch (HttpStatusCodeException ex) {
+                    upstreamStatus = ex.getStatusCode().value();
 
-            return new ProxyResponse(finalStatus, responseHeaders, responseBody);
+                    if (shouldRetryStatus(upstreamStatus) && attempt < maxAttempts) {
+                        pauseBeforeRetry(attempt);
+                        continue;
+                    }
 
-        } catch (ResourceAccessException ex) {
-            // Timeout / DNS / connection error.
+                    finalStatus = upstreamStatus;
+                    responseBody = ex.getResponseBodyAsByteArray();
+                    responseHeaders = flattenHeaders(ex.getResponseHeaders());
+
+                    if (upstreamStatus >= 500) {
+                        recordFailure("upstream-status-" + upstreamStatus);
+                    } else {
+                        recordSuccess();
+                    }
+
+                    return new ProxyResponse(finalStatus, responseHeaders, responseBody);
+
+                } catch (ResourceAccessException ex) {
+                    if (attempt < maxAttempts) {
+                        pauseBeforeRetry(attempt);
+                        continue;
+                    }
+
+                    finalStatus = 502;
+                    responseBody = fallbackBody("Upstream unavailable after retries.");
+                    responseHeaders = fallbackHeaders();
+                    recordFailure("resource-access:" + ex.getClass().getSimpleName());
+                    log.error("Upstream unavailable after retries: {}", ex.getMessage(), ex);
+
+                    return new ProxyResponse(finalStatus, responseHeaders, responseBody);
+
+                } catch (RuntimeException ex) {
+                    if (attempt < maxAttempts && isIdempotent(httpMethod)) {
+                        pauseBeforeRetry(attempt);
+                        continue;
+                    }
+
+                    finalStatus = 502;
+                    responseBody = fallbackBody("Gateway fallback response due to upstream instability.");
+                    responseHeaders = fallbackHeaders();
+                    recordFailure("runtime:" + ex.getClass().getSimpleName());
+                    log.error("Gateway fallback due to runtime upstream exception", ex);
+
+                    return new ProxyResponse(finalStatus, responseHeaders, responseBody);
+                }
+            }
+
             finalStatus = 502;
-            responseBody = ("Upstream unavailable").getBytes(StandardCharsets.UTF_8);
-            log.error("Upstream unavailable: {}", ex.getMessage(), ex);
-            responseHeaders = Map.of("Content-Type", "text/plain; charset=UTF-8");
-
+            responseBody = fallbackBody("Gateway fallback: retry budget exhausted.");
+            responseHeaders = fallbackHeaders();
+            recordFailure("retry-exhausted");
             return new ProxyResponse(finalStatus, responseHeaders, responseBody);
-
         } finally {
             long latencyMs = Math.max(0, (System.nanoTime() - startNanos) / 1_000_000L);
             String clientIp = extractClientIp(headers);
@@ -122,6 +195,88 @@ public class ProxyServiceImpl implements ProxyService {
                 startedAt
             );
         }
+    }
+
+    public boolean isCircuitOpen() {
+        return circuitState == CircuitState.OPEN;
+    }
+
+    public String circuitStateName() {
+        return circuitState.name();
+    }
+
+    public String lastFailureReason() {
+        return lastFailureReason;
+    }
+
+    private boolean allowRequestThroughCircuit() {
+        if (circuitState == CircuitState.CLOSED || circuitState == CircuitState.HALF_OPEN) {
+            return true;
+        }
+
+        if (openedAt.plusSeconds(circuitOpenSeconds).isAfter(Instant.now())) {
+            return false;
+        }
+
+        synchronized (this) {
+            if (circuitState == CircuitState.OPEN && openedAt.plusSeconds(circuitOpenSeconds).isBefore(Instant.now())) {
+                circuitState = CircuitState.HALF_OPEN;
+                return true;
+            }
+        }
+        return circuitState != CircuitState.OPEN;
+    }
+
+    private boolean isIdempotent(HttpMethod method) {
+        return HttpMethod.GET.equals(method)
+            || HttpMethod.HEAD.equals(method)
+            || HttpMethod.OPTIONS.equals(method)
+            || HttpMethod.TRACE.equals(method)
+            || HttpMethod.PUT.equals(method)
+            || HttpMethod.DELETE.equals(method);
+    }
+
+    private boolean shouldRetryStatus(int status) {
+        return status == 502 || status == 503 || status == 504;
+    }
+
+    private void pauseBeforeRetry(int attempt) {
+        if (retryBackoffMillis <= 0) {
+            return;
+        }
+
+        try {
+            Thread.sleep(retryBackoffMillis * attempt);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void recordSuccess() {
+        consecutiveFailures.set(0);
+        circuitState = CircuitState.CLOSED;
+        lastFailureReason = "";
+    }
+
+    private void recordFailure(String reason) {
+        lastFailureReason = reason;
+        int failures = consecutiveFailures.incrementAndGet();
+        if (failures >= failureThreshold) {
+            circuitState = CircuitState.OPEN;
+            openedAt = Instant.now();
+        }
+    }
+
+    private byte[] fallbackBody(String message) {
+        return message.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private Map<String, String> fallbackHeaders() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "text/plain; charset=UTF-8");
+        headers.put("X-Gateway-Fallback", "true");
+        headers.put("X-Circuit-State", circuitState.name());
+        return headers;
     }
     
     private String extractClientIp(Map<String, String> headers) {
