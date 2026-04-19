@@ -14,6 +14,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -265,10 +266,9 @@ public class ApiKeyServiceImpl implements ApiKeyService {
     }
 
     private void clearRateLimiterState(UUID apiKeyId) {
-        String pattern = "ratelimit:" + apiKeyId + ":*";
-        Set<String> keys = redisTemplate.keys(pattern);
-        if (keys != null && !keys.isEmpty()) {
-            redisTemplate.delete(keys);
-        }
-    }
+        redisTemplate.delete(List.of(
+        "tokenbucket:tokens:" + apiKeyId,
+           "tokenbucket:refill:" + apiKeyId
+       ));
+   }
 }
