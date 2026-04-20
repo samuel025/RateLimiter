@@ -3,6 +3,10 @@ package com.rate.ratelimiter.services;
 import com.rate.ratelimiter.entity.ApiKey;
 import com.rate.ratelimiter.entity.UsageLog;
 import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 /**
  * Service for recording gateway request usage/audit events.
@@ -62,4 +66,38 @@ public interface UsageLogService {
             Instant.now()
         );
     }
+
+    /**
+     * Retrieve a single usage log by id.
+     */
+    Optional<UsageLogView> getById(UUID usageLogId);
+
+    /**
+     * Search usage logs with optional filters.
+     */
+    Page<UsageLogView> search(
+        UUID apiKeyId,
+        String method,
+        Integer statusCode,
+        Integer minStatusCode,
+        Integer maxStatusCode,
+        String requestPathContains,
+        String clientIp,
+        Instant requestedFrom,
+        Instant requestedTo,
+        Pageable pageable
+    );
+
+    record UsageLogView(
+        UUID id,
+        UUID apiKeyId,
+        String requestPath,
+        String method,
+        int statusCode,
+        long latencyMs,
+        Integer upstreamStatusCode,
+        String clientIp,
+        String userAgent,
+        Instant requestedAt
+    ) {}
 }

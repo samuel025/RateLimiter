@@ -3,6 +3,8 @@ package com.rate.ratelimiter.controllers;
 import com.rate.ratelimiter.services.ApiKeyService;
 import com.rate.ratelimiter.services.ApiKeyService.CreatedApiClient;
 import com.rate.ratelimiter.services.ApiKeyService.CreatedApiKey;
+import com.rate.ratelimiter.services.UsageLogService;
+import com.rate.ratelimiter.services.UsageLogService.UsageLogView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Nonnull;
@@ -10,6 +12,10 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,9 +32,11 @@ import org.springframework.web.bind.annotation.*;
 public class AdminController {
 
     private final ApiKeyService apiKeyService;
+    private final UsageLogService usageLogService;
 
-    public AdminController(ApiKeyService apiKeyService) {
+    public AdminController(ApiKeyService apiKeyService, UsageLogService usageLogService) {
         this.apiKeyService = apiKeyService;
+        this.usageLogService = usageLogService;
     }
 
     /**
@@ -156,6 +164,67 @@ public class AdminController {
                         "API key not found",
                         "path",
                         "/admin/keys/" + apiKeyId,
+                        "timestamp",
+                        Instant.now().toString()
+                    )
+                )
+            );
+    }
+
+    /**
+     * Search and view usage logs.
+     */
+    @GetMapping("/usage-logs")
+    @Operation(summary = "Search usage logs")
+    public ResponseEntity<Page<UsageLogView>> searchUsageLogs(
+        @RequestParam(value = "apiKeyId", required = false) UUID apiKeyId,
+        @RequestParam(value = "method", required = false) String method,
+        @RequestParam(value = "statusCode", required = false) Integer statusCode,
+        @RequestParam(value = "minStatusCode", required = false) Integer minStatusCode,
+        @RequestParam(value = "maxStatusCode", required = false) Integer maxStatusCode,
+        @RequestParam(value = "requestPathContains", required = false) String requestPathContains,
+        @RequestParam(value = "clientIp", required = false) String clientIp,
+        @RequestParam(value = "requestedFrom", required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant requestedFrom,
+        @RequestParam(value = "requestedTo", required = false)
+        @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant requestedTo,
+        @PageableDefault(sort = "requestedAt", direction = Sort.Direction.DESC) Pageable pageable
+    ) {
+        Page<UsageLogView> page = usageLogService.search(
+            apiKeyId,
+            method,
+            statusCode,
+            minStatusCode,
+            maxStatusCode,
+            requestPathContains,
+            clientIp,
+            requestedFrom,
+            requestedTo,
+            pageable
+        );
+        return ResponseEntity.ok(page);
+    }
+
+    /**
+     * Fetch one usage log by id.
+     */
+    @GetMapping("/usage-logs/{usageLogId}")
+    @Operation(summary = "Get usage log by id")
+    public ResponseEntity<?> getUsageLogById(@PathVariable UUID usageLogId) {
+        return usageLogService
+            .getById(usageLogId)
+            .<ResponseEntity<?>>map(ResponseEntity::ok)
+            .orElseGet(() ->
+                ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                    Map.of(
+                        "status",
+                        404,
+                        "error",
+                        "Not Found",
+                        "message",
+                        "Usage log not found",
+                        "path",
+                        "/admin/usage-logs/" + usageLogId,
                         "timestamp",
                         Instant.now().toString()
                     )
