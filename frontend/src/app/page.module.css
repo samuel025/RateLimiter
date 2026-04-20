@@ -367,6 +367,168 @@
   background: #692626;
 }
 
+.liveSection {
+  margin-top: 1rem;
+  border: 1px solid #d4e2dd;
+  border-radius: 0.85rem;
+  background: #f7fcfb;
+  padding: 0.85rem;
+}
+
+.liveHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.liveHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.liveHeader p {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #56717a;
+}
+
+.liveToolbar {
+  margin-top: 0.75rem;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 170px 1fr auto auto;
+  align-items: end;
+}
+
+.liveToolbar label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+  color: #2f4048;
+}
+
+.liveToolbar select,
+.liveToolbar input {
+  width: 100%;
+  border-radius: 0.55rem;
+  border: 1px solid #c8d8d2;
+  background: #fff;
+  padding: 0.52rem 0.62rem;
+  color: #223138;
+}
+
+.liveToolbar button {
+  border: 1px solid #1c5e57;
+  background: #21665f;
+  color: #f3fefc;
+  border-radius: 0.55rem;
+  font-size: 0.83rem;
+  padding: 0.52rem 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.liveToolbar button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid #c8d8d2;
+  border-radius: 0.55rem;
+  background: #fff;
+  padding: 0.5rem 0.65rem;
+}
+
+.toggle input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+}
+
+.liveMeta {
+  margin: 0.6rem 0 0;
+  color: #4f6a72;
+  font-size: 0.79rem;
+}
+
+.liveError {
+  margin: 0.6rem 0 0;
+  color: #8a2f2f;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.liveTableWrap {
+  margin-top: 0.7rem;
+  overflow-x: auto;
+  border: 1px solid #d5e2de;
+  border-radius: 0.7rem;
+}
+
+.liveTable {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 0.82rem;
+}
+
+.liveTable th,
+.liveTable td {
+  text-align: left;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid #ebf0ee;
+  white-space: nowrap;
+}
+
+.liveTable th {
+  color: #4b646c;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.liveTable td:nth-child(3) {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.8rem;
+  border-radius: 999px;
+  padding: 0.12rem 0.4rem;
+  font-weight: 700;
+}
+
+.statusOk {
+  color: #1c6e3c;
+  background: #e0f6e8;
+}
+
+.statusWarn {
+  color: #8a5406;
+  background: #fdeac6;
+}
+
+.statusError {
+  color: #8a2626;
+  background: #f9dada;
+}
+
+.emptyRow {
+  text-align: center;
+  color: #5e737b;
+  padding: 0.9rem;
+}
+
 .demoOutput {
   margin-top: 0.9rem;
 }
@@ -383,8 +545,12 @@
   border-radius: 0.75rem;
   border: 1px solid #273136;
   padding: 0.8rem;
+  max-width: 100%;
   max-height: 280px;
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 0.8rem;
 }
 
@@ -415,6 +581,19 @@
   .endpointList small {
     grid-column: 1 / -1;
     margin-left: 2.5rem;
+  }
+
+  .liveToolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .liveToolbar button {
+    width: 100%;
+  }
+
+  .toggle {
+    justify-content: center;
   }
 }
 

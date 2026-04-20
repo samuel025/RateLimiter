@@ -7,10 +7,7 @@ export default function Home() {
       <main className={styles.container}>
         <section className={styles.hero}>
           <p className={styles.eyebrow}>RateLimiter Gateway</p>
-          <h1>
-            Protect your APIs with key auth, Redis rate limits, and a clean
-            admin surface.
-          </h1>
+          <h1>Protect your APIs.</h1>
           <p className={styles.subhead}>
             A Spring Boot gateway that validates API keys, applies per-key
             limits, proxies requests to upstreams, and logs usage. Built for
@@ -35,7 +32,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className={styles.metrics}>
+        {/* <section className={styles.metrics}>
           <article>
             <p>Rate Window</p>
             <h3>1 Minute</h3>
@@ -52,7 +49,7 @@ export default function Home() {
             <p>Data Store</p>
             <h3>PostgreSQL</h3>
           </article>
-        </section>
+        </section> */}
 
         <section className={styles.panel}>
           <h2>Request Flow</h2>
@@ -131,6 +128,11 @@ export default function Home() {
                   /admin/keys/{"{"}apiKeyId{"}"}
                 </code>
                 <small>Inspect metadata</small>
+              </li>
+              <li>
+                <span className={styles.methodGet}>GET</span>
+                <code>/admin/usage-logs</code>
+                <small>Search request logs</small>
               </li>
             </ul>
           </article>

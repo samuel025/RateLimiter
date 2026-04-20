@@ -1,12 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import styles from "../page.module.css";
 
 type DemoLog = {
   id: number;
   title: string;
   payload: unknown;
+};
+
+type UsageLogView = {
+  id: string;
+  apiKeyId: string;
+  requestPath: string;
+  method: string;
+  statusCode: number;
+  latencyMs: number;
+  upstreamStatusCode: number | null;
+  clientIp: string | null;
+  userAgent: string | null;
+  requestedAt: string;
+};
+
+type UsageLogPage = {
+  content: UsageLogView[];
+  number: number;
+  size: number;
+  totalElements: number;
 };
 
 export default function LiveDemo() {
@@ -19,8 +39,86 @@ export default function LiveDemo() {
   const [gatewayPath, setGatewayPath] = useState("/get");
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState<DemoLog[]>([]);
+  const [liveLogs, setLiveLogs] = useState<UsageLogView[]>([]);
+  const [liveLogsBusy, setLiveLogsBusy] = useState(false);
+  const [liveLogsError, setLiveLogsError] = useState<string | null>(null);
+  const [liveLogPathFilter, setLiveLogPathFilter] = useState("/gateway");
+  const [liveLogMethodFilter, setLiveLogMethodFilter] = useState("ALL");
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const [totalLogs, setTotalLogs] = useState(0);
 
   const latest = useMemo(() => logs[0], [logs]);
+
+  const fetchUsageLogs = useCallback(
+    async (showLoading = true) => {
+      if (showLoading) {
+        setLiveLogsBusy(true);
+      }
+      setLiveLogsError(null);
+
+      try {
+        const params = new URLSearchParams();
+        params.set("size", "10");
+
+        if (apiKeyId) {
+          params.set("apiKeyId", apiKeyId);
+        }
+        if (liveLogMethodFilter !== "ALL") {
+          params.set("method", liveLogMethodFilter);
+        }
+        if (liveLogPathFilter.trim()) {
+          params.set("requestPathContains", liveLogPathFilter.trim());
+        }
+
+        const response = await fetch(
+          `/api/demo/usage-logs?${params.toString()}`,
+          {
+            cache: "no-store",
+          },
+        );
+
+        const data = (await response.json()) as UsageLogPage;
+
+        if (!response.ok || !Array.isArray(data?.content)) {
+          throw new Error("Unable to load usage logs");
+        }
+
+        setLiveLogs(data.content);
+        setTotalLogs(
+          Number.isFinite(data.totalElements) ? data.totalElements : 0,
+        );
+        setLastRefreshedAt(new Date().toISOString());
+      } catch {
+        setLiveLogsError("Could not fetch live usage logs.");
+      } finally {
+        if (showLoading) {
+          setLiveLogsBusy(false);
+        }
+      }
+    },
+    [apiKeyId, liveLogMethodFilter, liveLogPathFilter],
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchUsageLogs(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [fetchUsageLogs]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void fetchUsageLogs(false);
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, fetchUsageLogs]);
 
   function pushLog(title: string, payload: unknown) {
     setLogs((prev) =>
@@ -133,9 +231,24 @@ export default function LiveDemo() {
         const data = await response.json();
         pushLog(`Gateway Request #${i}`, data);
       }
+      await fetchUsageLogs(false);
     } finally {
       setBusy(false);
     }
+  }
+
+  function formatTimestamp(value: string) {
+    return new Date(value).toLocaleTimeString();
+  }
+
+  function statusClass(statusCode: number) {
+    if (statusCode >= 500) {
+      return styles.statusError;
+    }
+    if (statusCode >= 400) {
+      return styles.statusWarn;
+    }
+    return styles.statusOk;
   }
 
   return (
@@ -235,6 +348,105 @@ export default function LiveDemo() {
             2,
           )}
         </pre>
+      </div>
+
+      <div className={styles.liveSection}>
+        <div className={styles.liveHeader}>
+          <h3>Live Usage Logs</h3>
+          <p>
+            {totalLogs > 0
+              ? `Showing latest ${liveLogs.length} of ${totalLogs}`
+              : "No usage logs yet"}
+          </p>
+        </div>
+
+        <div className={styles.liveToolbar}>
+          <label>
+            Method
+            <select
+              value={liveLogMethodFilter}
+              onChange={(e) => setLiveLogMethodFilter(e.target.value)}
+            >
+              <option value="ALL">All</option>
+              <option value="GET">GET</option>
+              <option value="POST">POST</option>
+              <option value="PATCH">PATCH</option>
+              <option value="PUT">PUT</option>
+              <option value="DELETE">DELETE</option>
+            </select>
+          </label>
+          <label className={styles.fullRow}>
+            Path contains
+            <input
+              value={liveLogPathFilter}
+              onChange={(e) => setLiveLogPathFilter(e.target.value)}
+              placeholder="/gateway"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void fetchUsageLogs(true)}
+            disabled={liveLogsBusy}
+          >
+            Refresh now
+          </button>
+          <label className={styles.toggle}>
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+            />
+            Auto refresh (3s)
+          </label>
+        </div>
+
+        {lastRefreshedAt ? (
+          <p className={styles.liveMeta}>
+            Last update: {new Date(lastRefreshedAt).toLocaleTimeString()}
+          </p>
+        ) : null}
+
+        {liveLogsError ? (
+          <p className={styles.liveError}>{liveLogsError}</p>
+        ) : null}
+
+        <div className={styles.liveTableWrap}>
+          <table className={styles.liveTable}>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Method</th>
+                <th>Path</th>
+                <th>Status</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody>
+              {liveLogs.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{formatTimestamp(entry.requestedAt)}</td>
+                  <td>{entry.method}</td>
+                  <td title={entry.requestPath}>{entry.requestPath}</td>
+                  <td>
+                    <span
+                      className={`${styles.logStatus} ${statusClass(entry.statusCode)}`}
+                    >
+                      {entry.statusCode}
+                    </span>
+                  </td>
+                  <td>{entry.latencyMs} ms</td>
+                </tr>
+              ))}
+              {!liveLogsBusy && liveLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className={styles.emptyRow}>
+                    No matching logs.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );
